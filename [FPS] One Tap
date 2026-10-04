@@ -1,1 +1,2004 @@
+--[[
+    by แบงค์ | Complete Script Hub v2.4
+    Features:
+      - ย้าย Live Watermark & Monitor (FPS, Ping) และ Session Kill & Death Tracker มาไว้บนเมนูหลักด้านหลัง "by แบงค์" ไม่แยกหน้าต่างลอย
+      - แก้บัค POV / FOV ป้องกันการลูป Event ซ้ำซ้อน (Safe Threshold Check) ลื่นไหล ไม่กระตุก
+      - ปรับแต่งความเร็วในการวิ่ง (Running Speed) และระบบกด Shift สปีดบูสต์วิ่งไวพิเศษ (Sprint Boost)
+      - ปุ่ม [-] ย่อหน้าต่างเหลือเฉพาะแถบชื่อด้านบน (Window Rollup) โดยซ่อน Stats บนบาร์อัตโนมัติ
+      - ปุ่ม [X] ปิดหน้าต่างแล้วแสดงเฉพาะรูปภาพสี่เหลี่ยม C:\Users\User\.gemini\314934f6d0bc40c273087933b74e614d.webp ลากย้ายได้อิสระ
+      - วงกลม FOV เป็นเส้นขอบวงกลมล้วน (Outline Ring) ไม่มีสีพื้นหลังทึบ
+      - ระบบเปลี่ยนภาษาแท้ 100% แยกภาษาไทยและอังกฤษโดยสิ้นเชิง
+      - Aimbot, Silent Aim, ESP Box & Chams, Tracers, Custom Crosshair, Hitbox Expander, Movement, Teleport
+--]]
 
+-- ล้าง Instance และการเชื่อมต่อเก่าทั้งหมด
+if _G.ByBankUnload then
+    pcall(_G.ByBankUnload)
+    _G.ByBankUnload = nil
+end
+
+pcall(function()
+    for _, v in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if v.Name == "ScreenGui" and v:FindFirstChild("Frame") then
+            v:Destroy()
+        end
+    end
+    local parent = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+    for _, name in ipairs({
+        "SyllinseMiniToggle", "SyllinseESP", "SyllinseFOVCircle", "SyllinseHUD", "SyllinseCrosshair",
+        "ByBankMiniToggle", "ByBankESP", "ByBankFOVCircle", "ByBankHUD", "ByBankCrosshair", "ByBankAvatarToggle"
+    }) do
+        if parent:FindFirstChild(name) then
+            pcall(function() parent[name]:Destroy() end)
+        end
+    end
+    -- ล้างชิ้นส่วนกระจกและเอฟเฟกต์เบลอที่ตกค้างกลางจอ
+    for _, v in ipairs(game:GetService("Workspace"):GetChildren()) do
+        if v.Name == "Body" and v:IsA("Part") and v.Material == Enum.Material.Glass then
+            pcall(function() v:Destroy() end)
+        end
+    end
+    for _, v in ipairs(game:GetService("Lighting"):GetChildren()) do
+        if v:IsA("DepthOfFieldEffect") and v.Name == "DepthOfField" then
+            v.Enabled = false
+        end
+    end
+end)
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Stats = game:GetService("Stats")
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- โหลดรูปภาพสี่เหลี่ยม by_bank_avatar.webp
+local avatarAsset = ""
+pcall(function()
+    if typeof(isfile) == "function" and isfile("by_bank_avatar.webp") and typeof(getcustomasset) == "function" then
+        avatarAsset = getcustomasset("by_bank_avatar.webp")
+    end
+end)
+
+-- โหลด Fluent UI Library
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+_G.ByBankFluent = Fluent
+_G.ByBankOptions = Fluent.Options
+
+-- State Variables
+local currentLanguage = "TH"
+local aimbotEnabled = false
+local silentAimEnabled = false
+local aimSmoothness = 0.35
+local fovRadius = 150
+local showFov = false
+local aimLockKey = "Right Click"
+
+local espStyle = "Box"
+local espEnabled = true
+local espNamesEnabled = true
+local tracersEnabled = false
+local hitboxEnabled = false
+local hitboxSize = 12
+
+local customFovEnabled = true
+local customFovValue = 110
+local defaultCameraFov = (Camera and Camera.FieldOfView) or 70
+local cameraZoomEnabled = false
+local cameraZoomDistance = 18
+local fovChanging = false
+local fovPropConn = nil
+
+-- Colors
+local fovColor = Color3.fromRGB(212, 175, 55)
+local espColor = Color3.fromRGB(255, 60, 60)
+local tracerColor = Color3.fromRGB(255, 220, 60)
+local crosshairColor = Color3.fromRGB(80, 255, 120)
+
+-- Crosshair
+local crosshairEnabled = false
+local crosshairStyle = "Cross"
+local crosshairSize = 12
+local crosshairThickness = 2
+
+-- Menu Bar Stats & Monitor (ผสานลงบนหัวเมนู ไม่แยกหน้าต่างลอย)
+local showMenuMonitor = true
+local showMenuStats = true
+local currentFps = 60
+local currentPing = 0
+local sessionKills = 0
+local sessionDeaths = 0
+
+-- Movement (เน้นความเร็วในการวิ่งและสปีดบูสต์)
+local noclipEnabled = false
+local infJumpEnabled = false
+local runSpeedValue = 26
+local sprintSpeedValue = 45
+local sprintBoostEnabled = true
+local jumpPowerValue = 50
+local noclipConn, infJumpConn, renderConn, speedConn
+
+local guiParent = (typeof(gethui) == "function" and gethui()) or game:GetService("CoreGui")
+
+----------------------------------------------------------------------
+-- 1. FOV CIRCLE GUI (HOLLOW OUTLINE RING - ZERO BACKGROUND FILL)
+----------------------------------------------------------------------
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name = "ByBankFOVCircle"
+fovGui.ResetOnSpawn = false
+fovGui.Parent = guiParent
+
+local fovCircle = Instance.new("Frame")
+fovCircle.Name = "Circle"
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
+fovCircle.BackgroundTransparency = 1 -- ไม่มีสีพื้นหลัง 100%
+fovCircle.BorderSizePixel = 0
+fovCircle.Visible = false
+fovCircle.Parent = fovGui
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(1, 0)
+fovCorner.Parent = fovCircle
+
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Name = "Stroke"
+fovStroke.Color = fovColor
+fovStroke.Thickness = 1.5
+fovStroke.Transparency = 0
+fovStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+fovStroke.Parent = fovCircle
+
+----------------------------------------------------------------------
+-- 2. CUSTOM CROSSHAIR
+----------------------------------------------------------------------
+local crosshairGui = Instance.new("ScreenGui")
+crosshairGui.Name = "ByBankCrosshair"
+crosshairGui.ResetOnSpawn = false
+crosshairGui.Parent = guiParent
+
+local crosshairCenter = Instance.new("Frame")
+crosshairCenter.Name = "Center"
+crosshairCenter.AnchorPoint = Vector2.new(0.5, 0.5)
+crosshairCenter.Position = UDim2.new(0.5, 0, 0.5, 0)
+crosshairCenter.Size = UDim2.new(0, 1, 0, 1)
+crosshairCenter.BackgroundTransparency = 1
+crosshairCenter.Visible = false
+crosshairCenter.Parent = crosshairGui
+
+local chDot = Instance.new("Frame")
+chDot.Name = "Dot"
+chDot.AnchorPoint = Vector2.new(0.5, 0.5)
+chDot.Position = UDim2.new(0.5, 0, 0.5, 0)
+chDot.Size = UDim2.new(0, 4, 0, 4)
+chDot.BackgroundColor3 = crosshairColor
+chDot.BorderSizePixel = 0
+chDot.Parent = crosshairCenter
+local dotCorner = Instance.new("UICorner")
+dotCorner.CornerRadius = UDim.new(1, 0)
+dotCorner.Parent = chDot
+
+local chTop = Instance.new("Frame")
+chTop.AnchorPoint = Vector2.new(0.5, 1)
+chTop.Position = UDim2.new(0.5, 0, 0.5, -4)
+chTop.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize)
+chTop.BackgroundColor3 = crosshairColor
+chTop.BorderSizePixel = 0
+chTop.Parent = crosshairCenter
+
+local chBottom = Instance.new("Frame")
+chBottom.AnchorPoint = Vector2.new(0.5, 0)
+chBottom.Position = UDim2.new(0.5, 0, 0.5, 4)
+chBottom.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize)
+chBottom.BackgroundColor3 = crosshairColor
+chBottom.BorderSizePixel = 0
+chBottom.Parent = crosshairCenter
+
+local chLeft = Instance.new("Frame")
+chLeft.AnchorPoint = Vector2.new(1, 0.5)
+chLeft.Position = UDim2.new(0.5, -4, 0.5, 0)
+chLeft.Size = UDim2.new(0, crosshairSize, 0, crosshairThickness)
+chLeft.BackgroundColor3 = crosshairColor
+chLeft.BorderSizePixel = 0
+chLeft.Parent = crosshairCenter
+
+local chRight = Instance.new("Frame")
+chRight.AnchorPoint = Vector2.new(0, 0.5)
+chRight.Position = UDim2.new(0.5, 4, 0.5, 0)
+chRight.Size = UDim2.new(0, crosshairSize, 0, crosshairThickness)
+chRight.BackgroundColor3 = crosshairColor
+chRight.BorderSizePixel = 0
+chRight.Parent = crosshairCenter
+
+local function updateCrosshair()
+    crosshairCenter.Visible = crosshairEnabled
+    chDot.BackgroundColor3 = crosshairColor
+    chTop.BackgroundColor3 = crosshairColor
+    chBottom.BackgroundColor3 = crosshairColor
+    chLeft.BackgroundColor3 = crosshairColor
+    chRight.BackgroundColor3 = crosshairColor
+
+    if crosshairStyle == "Dot" then
+        chDot.Visible = true
+        chDot.Size = UDim2.new(0, crosshairSize / 2, 0, crosshairSize / 2)
+        chTop.Visible = false
+        chBottom.Visible = false
+        chLeft.Visible = false
+        chRight.Visible = false
+    elseif crosshairStyle == "Circle" then
+        chDot.Visible = true
+        chDot.Size = UDim2.new(0, crosshairSize, 0, crosshairSize)
+        chTop.Visible = false
+        chBottom.Visible = false
+        chLeft.Visible = false
+        chRight.Visible = false
+    else
+        chDot.Visible = true
+        chDot.Size = UDim2.new(0, crosshairThickness * 2, 0, crosshairThickness * 2)
+        chTop.Visible = true
+        chBottom.Visible = true
+        chLeft.Visible = true
+        chRight.Visible = true
+        chTop.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize)
+        chBottom.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize)
+        chLeft.Size = UDim2.new(0, crosshairSize, 0, crosshairThickness)
+        chRight.Size = UDim2.new(0, crosshairSize, 0, crosshairThickness)
+    end
+end
+
+----------------------------------------------------------------------
+-- 3. TARGETING & AIM LOCK HELPERS
+----------------------------------------------------------------------
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ByBankESP"
+espFolder.Parent = guiParent
+
+local tracersList = {}
+
+local function getEnemies()
+    local enemies = {}
+    local myChar = LocalPlayer.Character
+    for _, model in ipairs(Workspace:GetChildren()) do
+        if model:IsA("Model") and model ~= myChar then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            local hrp = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Head")
+            if hum and hrp and hum.Health > 0 then
+                table.insert(enemies, model)
+            end
+        end
+    end
+    return enemies
+end
+
+local function getTargetInFOV()
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil end
+
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local bestTarget = nil
+    local bestDistance = fovRadius
+
+    for _, enemy in ipairs(getEnemies()) do
+        local head = enemy:FindFirstChild("Head")
+        if head then
+            local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                if screenDist < bestDistance then
+                    bestDistance = screenDist
+                    bestTarget = head
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+local function getClosestEnemy()
+    local myChar = LocalPlayer.Character
+    local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHrp then return nil end
+
+    local closest = nil
+    local shortestDist = math.huge
+    for _, enemy in ipairs(getEnemies()) do
+        local hrp = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
+        if hrp then
+            local dist = (hrp.Position - myHrp.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                closest = enemy
+            end
+        end
+    end
+    return closest, shortestDist
+end
+
+local function isAimKeyPressed()
+    if aimLockKey == "Always Active" or aimLockKey == "Always" then
+        return true
+    elseif aimLockKey == "Right Click" then
+        return UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+    elseif aimLockKey == "Left Alt" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)
+    elseif aimLockKey == "Left Shift" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+    elseif aimLockKey == "E" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.E)
+    elseif aimLockKey == "Q" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.Q)
+    elseif aimLockKey == "C" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.C)
+    elseif aimLockKey == "X" then
+        return UserInputService:IsKeyDown(Enum.KeyCode.X)
+    end
+    return false
+end
+
+----------------------------------------------------------------------
+-- 4. COMPREHENSIVE TRANSLATION DICTIONARIES (PURE THAI vs PURE ENGLISH)
+----------------------------------------------------------------------
+local DICT_TH_TO_EN = {
+    ["by แบงค์"] = "by Bank",
+    ["ระบบช่วยเล่นครบวงจร"] = "Complete Script Hub",
+    
+    -- Tabs
+    ["ล็อคเป้า"] = "Aimbot",
+    ["มองทะลุ"] = "Visuals",
+    ["เป้าเล็ง"] = "Crosshair",
+    ["มุมมองและสถิติ"] = "Camera & HUD",
+    ["ขยายเป้า"] = "Hitbox Expander",
+    ["การเคลื่อนที่"] = "Movement",
+    ["วาร์ป"] = "Teleport",
+    ["ตั้งค่าระบบ"] = "Settings",
+    
+    -- Sections & Descriptions
+    ["ระบบล็อคเป้าอัตโนมัติ"] = "Aimbot Targeting System",
+    ["ตั้งค่าล็อคเป้าและปุ่มลัดสำหรับทริกเกอร์การล็อค"] = "Configure target locking and activation keybinds",
+    ["ปุ่มล็อคเป้า"] = "Lock Keybind",
+    ["เลือกปุ่มลัดที่ต้องการใช้สำหรับล็อคเป้า"] = "Choose which key triggers target lock",
+    ["ล็อคเป้าตามกล้อง"] = "Camera Aimbot",
+    ["หันมุมกล้องล็อคหัวศัตรูเมื่อกดปุ่มล็อคที่เลือก"] = "Smoothly orient camera to enemy heads while holding key",
+    ["ยิงเข้าหัวอัตโนมัติ (Silent Aim)"] = "Silent Aim",
+    ["หันวิถีกระสุนเข้าหาหัวศัตรูในระยะวงกลมเล็งทันทีที่ยิง"] = "Redirect bullets towards closest target in FOV upon firing",
+    ["ความสมูทในการเล็ง"] = "Aim Smoothness",
+    ["แสดงวงกลมระยะเล็ง"] = "Show FOV Circle",
+    ["ขนาดรัศมีวงกลมเล็ง"] = "FOV Circle Radius",
+    ["สีวงกลมระยะเล็ง"] = "FOV Circle Color",
+    
+    -- Visuals
+    ["ระบบมองทะลุสิ่งกีดขวาง"] = "ESP Visuals",
+    ["แสดงตำแหน่งศัตรูผ่านกำแพงและสิ่งกีดขวาง"] = "Detect enemy positions through obstacles",
+    ["เปิดมองทะลุ (ESP)"] = "Enable ESP",
+    ["แสดงกรอบกล่องสี่เหลี่ยมหรือไฮไลท์สีผ่านสิ่งกีดขวาง"] = "Show bounding boxes or chams highlight through obstacles",
+    ["รูปแบบมองทะลุ"] = "ESP Style",
+    ["เลือกแสดงเป็นกล่องสี่เหลี่ยม (Box) หรือสีเรืองแสง (Chams)"] = "Choose between bounding box or chams glow",
+    ["กล่องสี่เหลี่ยม (Box)"] = "Bounding Box",
+    ["สีเรืองแสง (Chams)"] = "Chams Highlight",
+    ["แสดงชื่อและพลังชีวิต"] = "Show Names & Health",
+    ["แสดงป้ายชื่อและหลอดเลือดบนหัวศัตรู"] = "Display billboard tags above enemy heads",
+    ["เส้นนำสายตาหาศัตรู"] = "Snaplines / Tracers",
+    ["ลากเส้นนำทางจากด้านล่างของหน้าจอตรงไปยังศัตรูทุกคน"] = "Draw guide lines from screen bottom to every enemy",
+    ["สีของกล่อง/มองทะลุ"] = "ESP Box / Chams Color",
+    ["สีเส้นนำสายตา"] = "Snapline Color",
+    
+    -- Crosshair
+    ["เป้าเล็งกำหนดเอง"] = "Custom Crosshair",
+    ["วาดเป้าเล็งรูปแบบต่างๆ ไว้ตรงกลางหน้าจอ"] = "Render custom screen reticle at center",
+    ["เปิดเป้าเล็งกำหนดเอง"] = "Enable Custom Reticle",
+    ["รูปแบบเป้าเล็ง"] = "Crosshair Style",
+    ["ขนาดเป้าเล็ง"] = "Crosshair Size",
+    ["ความหนาของเส้น"] = "Line Thickness",
+    ["สีของเป้าเล็ง"] = "Reticle Color",
+    
+    -- Camera & HUD
+    ["มุมมองกล้องและมอนิเตอร์"] = "Camera & HUD Display",
+    ["ปรับระยะมุมมองสายตาและแถบแสดงข้อมูลประสิทธิภาพบนเมนู"] = "Adjust camera FOV and live monitor on menu header",
+    ["เปิดปรับมุมมองกว้าง (FOV Override)"] = "FOV Override",
+    ["บังคับมุมมองกล้องให้กว้างตามต้องการ (ป้องกันเกมล็อค 70-95 FOV)"] = "Override camera FOV safely to desired angle",
+    ["ระยะมุมมองสายตา (FOV)"] = "Camera Field of View",
+    ["ปรับมุมมองกล้องให้กว้างขึ้น (70-120 องศา)"] = "Increase camera angle for modern FPS view (70-120)",
+    ["แสดง FPS และ Ping บนหัวเมนู"] = "Show FPS & Ping on Menu",
+    ["แสดง FPS และค่า Ping สดด้านหลังชื่อ 'by แบงค์' บนแถบเมนู"] = "Display live FPS & Ping behind title on menu bar",
+    ["แสดงสถิติ คิล/ตาย บนหัวเมนู"] = "Show Kills/Deaths on Menu",
+    ["แสดงจำนวนคิลและตายสดด้านหลังชื่อ 'by แบงค์' บนแถบเมนู"] = "Display live kill & death count behind title on menu bar",
+    
+    -- Combat
+    ["ขยายขนาดเป้าสัมผัส"] = "Hitbox Expander",
+    ["ขยายขนาดส่วนหัวศัตรูเพื่อให้ยิงโดนง่ายที่สุด"] = "Enlarge enemy head hitboxes for easy shots",
+    ["เปิดขยายขนาดหัวศัตรู"] = "Enable Hitbox Expander",
+    ["ขนาดเป้าสัมผัส"] = "Hitbox Size",
+    
+    -- Movement
+    ["ระบบการเคลื่อนที่ตัวละคร"] = "Player Movement",
+    ["ปรับความเร็ววิ่ง สปีดบูสต์ แรงกระโดด และการเดินทะลุกำแพง"] = "Configure run speed, sprint boost, jump power, and collision",
+    ["ความเร็วในการวิ่ง"] = "Running Speed",
+    ["ปรับความเร็วพื้นฐานในการวิ่งของตัวละคร (ปกติเกมอยู่ที่ 22-26)"] = "Adjust base running speed (Default in game is 22-26)",
+    ["กด Shift วิ่งไวพิเศษ (Sprint Boost)"] = "Sprint Boost (Hold Shift)",
+    ["เมื่อกดปุ่ม Shift ค้างไว้ จะวิ่งเร็วด้วยความเร็วสปีดบูสต์"] = "Run with boosted sprint speed while holding Shift",
+    ["ความเร็วเมื่อกดวิ่ง (Shift Sprint)"] = "Sprint Speed (Shift)",
+    ["ความเร็วขณะกดปุ่ม Shift พุ่งวิ่ง"] = "Speed while holding Shift to sprint",
+    ["แรงกระโดด"] = "Jump Power",
+    ["กระโดดกลางอากาศต่อเนื่อง"] = "Infinite Air Jump",
+    ["เดินทะลุกำแพง"] = "Noclip Wallpass",
+    
+    -- Teleport
+    ["วาร์ปตำแหน่งตัวละคร"] = "Position Teleport",
+    ["วาร์ปไปยังศัตรูหรือจุดต่างๆ อย่างรวดเร็ว"] = "Quickly navigate around the arena",
+    ["วาร์ปไปด้านหลังศัตรูที่ใกล้ที่สุด"] = "Teleport Behind Closest Enemy",
+    ["วาร์ปขึ้นที่สูง (+50)"] = "Teleport Upwards (+50)",
+    ["พุ่งตัวไปข้างหน้า (+25)"] = "Dash Forward (+25)",
+    
+    -- Settings
+    ["การตั้งค่าระบบ"] = "System Settings",
+    ["ปรับแต่งภาษา ธีมสี และการทำงานของระบบ"] = "Configure UI theme, language, and behavior",
+    ["ภาษาของเมนู"] = "System Language",
+    ["ธีมสีของหน้าต่าง"] = "Window Theme",
+    ["เอฟเฟกต์พื้นหลังเบลอ"] = "Background Acrylic Blur",
+    ["ปิดการทำงานสคริปต์"] = "Unload Script"
+}
+
+local DICT_EN_TO_TH = {}
+for th, en in pairs(DICT_TH_TO_EN) do
+    DICT_EN_TO_TH[en] = th
+end
+
+----------------------------------------------------------------------
+-- 5. FLUENT WINDOW CREATION & TITLEBAR STATS INTEGRATION
+----------------------------------------------------------------------
+local Window = Fluent:CreateWindow({
+    Title = "by แบงค์",
+    SubTitle = "FPS: 60  |  Ping: 0ms  |  คิล: 0  |  ตาย: 0",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.RightControl
+})
+
+local subTitleLabel
+pcall(function()
+    for _, obj in ipairs(Window.TitleBar.Frame:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Text:find("FPS") then
+            subTitleLabel = obj
+            break
+        end
+    end
+    if not subTitleLabel then
+        local titleLabels = {}
+        for _, obj in ipairs(Window.TitleBar.Frame:GetDescendants()) do
+            if obj:IsA("TextLabel") then
+                table.insert(titleLabels, obj)
+            end
+        end
+        subTitleLabel = titleLabels[2]
+    end
+    if subTitleLabel then
+        subTitleLabel.TextColor3 = Color3.fromRGB(180, 185, 205)
+        subTitleLabel.Font = Enum.Font.GothamMedium
+        subTitleLabel.TextSize = 11
+    end
+end)
+_G.ByBankWindow = Window
+
+-- ฟังก์ชันอัปเดตข้อมูลมอนิเตอร์และสถิติสดบนแถบเมนูด้านหลัง "by แบงค์"
+local isRolledUp = false
+local function updateMenuStats()
+    if not subTitleLabel or not subTitleLabel.Parent then return end
+
+    local parts = {}
+    if showMenuMonitor then
+        table.insert(parts, string.format("FPS: %d", currentFps))
+        table.insert(parts, string.format("Ping: %dms", currentPing))
+    end
+    if showMenuStats then
+        if currentLanguage == "EN" then
+            table.insert(parts, string.format("Kills: %d  |  Deaths: %d", sessionKills, sessionDeaths))
+        else
+            table.insert(parts, string.format("คิล: %d  |  ตาย: %d", sessionKills, sessionDeaths))
+        end
+    end
+
+    if #parts > 0 then
+        subTitleLabel.Text = table.concat(parts, "  |  ")
+        subTitleLabel.Visible = true
+    else
+        subTitleLabel.Text = ""
+        subTitleLabel.Visible = false
+    end
+end
+_G.ByBankUpdateStats = updateMenuStats
+
+local Tabs = {}
+Tabs.Aimbot = Window:AddTab({ Title = "ล็อคเป้า", Icon = "crosshair" })
+Tabs.Visuals = Window:AddTab({ Title = "มองทะลุ", Icon = "eye" })
+Tabs.Crosshair = Window:AddTab({ Title = "เป้าเล็ง", Icon = "plus" })
+Tabs.Camera = Window:AddTab({ Title = "มุมมองและสถิติ", Icon = "tv" })
+Tabs.Combat = Window:AddTab({ Title = "ขยายเป้า", Icon = "target" })
+Tabs.Movement = Window:AddTab({ Title = "การเคลื่อนที่", Icon = "gauge" })
+Tabs.Teleport = Window:AddTab({ Title = "วาร์ป", Icon = "navigation" })
+Tabs.Settings = Window:AddTab({ Title = "ตั้งค่าระบบ", Icon = "settings" })
+_G.ByBankTabs = Tabs
+
+-- 1. TAB: AIMBOT
+Tabs.Aimbot:AddParagraph({ Title = "ระบบล็อคเป้าอัตโนมัติ", Content = "ตั้งค่าล็อคเป้าและปุ่มลัดสำหรับทริกเกอร์การล็อค" })
+Tabs.Aimbot:AddDropdown("AimKeyDropdown", {
+    Title = "ปุ่มล็อคเป้า",
+    Description = "เลือกปุ่มลัดที่ต้องการใช้สำหรับล็อคเป้า",
+    Values = {"Right Click", "Left Alt", "Left Shift", "E", "Q", "C", "X", "Always Active"},
+    Default = "Right Click",
+    Callback = function(Value)
+        aimLockKey = Value
+    end
+})
+Tabs.Aimbot:AddToggle("CamAimbotToggle", {
+    Title = "ล็อคเป้าตามกล้อง",
+    Description = "หันมุมกล้องล็อคหัวศัตรูเมื่อกดปุ่มล็อคที่เลือก",
+    Default = false,
+    Callback = function(Value)
+        aimbotEnabled = Value
+    end
+})
+Tabs.Aimbot:AddToggle("SilentAimToggle", {
+    Title = "ยิงเข้าหัวอัตโนมัติ (Silent Aim)",
+    Description = "หันวิถีกระสุนเข้าหาหัวศัตรูในระยะวงกลมเล็งทันทีที่ยิง",
+    Default = false,
+    Callback = function(Value)
+        silentAimEnabled = Value
+    end
+})
+Tabs.Aimbot:AddSlider("AimSmoothSlider", {
+    Title = "ความสมูทในการเล็ง",
+    Default = 0.35,
+    Min = 0.05,
+    Max = 1,
+    Rounding = 2,
+    Callback = function(Value)
+        aimSmoothness = Value
+    end
+})
+Tabs.Aimbot:AddToggle("ShowFOVToggle", {
+    Title = "แสดงวงกลมระยะเล็ง",
+    Default = false,
+    Callback = function(Value)
+        showFov = Value
+        fovCircle.Visible = showFov
+    end
+})
+Tabs.Aimbot:AddSlider("FOVRadiusSlider", {
+    Title = "ขนาดรัศมีวงกลมเล็ง",
+    Default = 150,
+    Min = 50,
+    Max = 500,
+    Rounding = 0,
+    Callback = function(Value)
+        fovRadius = Value
+        fovCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
+    end
+})
+Tabs.Aimbot:AddColorpicker("FOVColorPicker", {
+    Title = "สีวงกลมระยะเล็ง",
+    Default = fovColor,
+    Callback = function(Value)
+        fovColor = Value
+        fovStroke.Color = fovColor
+    end
+})
+
+-- 2. TAB: VISUALS
+Tabs.Visuals:AddParagraph({ Title = "ระบบมองทะลุสิ่งกีดขวาง", Content = "แสดงตำแหน่งศัตรูผ่านกำแพงและสิ่งกีดขวาง" })
+Tabs.Visuals:AddToggle("ESPToggle", {
+    Title = "เปิดมองทะลุ (ESP)",
+    Description = "แสดงกรอบกล่องสี่เหลี่ยมหรือไฮไลท์สีผ่านสิ่งกีดขวาง",
+    Default = true,
+    Callback = function(Value)
+        espEnabled = Value
+        if not espEnabled then
+            espFolder:ClearAllChildren()
+        end
+    end
+})
+Tabs.Visuals:AddDropdown("ESPStyleDropdown", {
+    Title = "รูปแบบมองทะลุ",
+    Description = "เลือกแสดงเป็นกล่องสี่เหลี่ยม (Box) หรือสีเรืองแสง (Chams)",
+    Values = {"กล่องสี่เหลี่ยม (Box)", "สีเรืองแสง (Chams)"},
+    Default = "กล่องสี่เหลี่ยม (Box)",
+    Callback = function(Value)
+        if Value:find("Box") or Value:find("กล่อง") then
+            espStyle = "Box"
+        else
+            espStyle = "Chams"
+        end
+        for _, c in ipairs(espFolder:GetChildren()) do
+            if c:IsA("Highlight") or c.Name:find("_Box") then
+                c:Destroy()
+            end
+        end
+    end
+})
+Tabs.Visuals:AddToggle("ESPNamesToggle", {
+    Title = "แสดงชื่อและพลังชีวิต",
+    Description = "แสดงป้ายชื่อและหลอดเลือดบนหัวศัตรู",
+    Default = true,
+    Callback = function(Value)
+        espNamesEnabled = Value
+        if not espNamesEnabled then
+            for _, c in ipairs(espFolder:GetChildren()) do
+                if c:IsA("BillboardGui") and c.Name:find("_Tag") then c:Destroy() end
+            end
+        end
+    end
+})
+Tabs.Visuals:AddToggle("TracersToggle", {
+    Title = "เส้นนำสายตาหาศัตรู",
+    Description = "ลากเส้นนำทางจากด้านล่างของหน้าจอตรงไปยังศัตรูทุกคน",
+    Default = false,
+    Callback = function(Value)
+        tracersEnabled = Value
+        if not tracersEnabled then
+            for _, line in pairs(tracersList) do
+                pcall(function() line.Visible = false end)
+            end
+        end
+    end
+})
+Tabs.Visuals:AddColorpicker("ESPColorPicker", {
+    Title = "สีของกล่อง/มองทะลุ",
+    Default = espColor,
+    Callback = function(Value)
+        espColor = Value
+        for _, c in ipairs(espFolder:GetChildren()) do
+            if c:IsA("Highlight") then
+                c.FillColor = espColor
+                c.OutlineColor = espColor
+            elseif c.Name:find("_Box") then
+                local frame = c:FindFirstChild("BoxFrame")
+                if frame then
+                    local stroke = frame:FindFirstChild("Stroke")
+                    if stroke then stroke.Color = espColor end
+                end
+            end
+        end
+    end
+})
+Tabs.Visuals:AddColorpicker("TracerColorPicker", {
+    Title = "สีเส้นนำสายตา",
+    Default = tracerColor,
+    Callback = function(Value)
+        tracerColor = Value
+        for _, line in pairs(tracersList) do
+            pcall(function() line.Color = tracerColor end)
+        end
+    end
+})
+
+-- 3. TAB: CROSSHAIR
+Tabs.Crosshair:AddParagraph({ Title = "เป้าเล็งกำหนดเอง", Content = "วาดเป้าเล็งรูปแบบต่างๆ ไว้ตรงกลางหน้าจอ" })
+Tabs.Crosshair:AddToggle("CrosshairToggle", {
+    Title = "เปิดเป้าเล็งกำหนดเอง",
+    Default = false,
+    Callback = function(Value)
+        crosshairEnabled = Value
+        updateCrosshair()
+    end
+})
+Tabs.Crosshair:AddDropdown("CrosshairStyleDropdown", {
+    Title = "รูปแบบเป้าเล็ง",
+    Values = {"Cross", "Dot", "Circle"},
+    Default = "Cross",
+    Callback = function(Value)
+        crosshairStyle = Value
+        updateCrosshair()
+    end
+})
+Tabs.Crosshair:AddSlider("CrosshairSizeSlider", {
+    Title = "ขนาดเป้าเล็ง",
+    Default = 12,
+    Min = 4,
+    Max = 40,
+    Rounding = 0,
+    Callback = function(Value)
+        crosshairSize = Value
+        updateCrosshair()
+    end
+})
+Tabs.Crosshair:AddSlider("CrosshairThickSlider", {
+    Title = "ความหนาของเส้น",
+    Default = 2,
+    Min = 1,
+    Max = 6,
+    Rounding = 0,
+    Callback = function(Value)
+        crosshairThickness = Value
+        updateCrosshair()
+    end
+})
+Tabs.Crosshair:AddColorpicker("CrosshairColorPicker", {
+    Title = "สีของเป้าเล็ง",
+    Default = crosshairColor,
+    Callback = function(Value)
+        crosshairColor = Value
+        updateCrosshair()
+    end
+})
+
+-- 4. TAB: CAMERA & HUD
+Tabs.Camera:AddParagraph({ Title = "มุมมองกล้องและมอนิเตอร์", Content = "ปรับระยะมุมมองสายตา (FOV) และระยะห่างกล้องถอยหลังเพื่อมุมมองที่กว้างขึ้น" })
+
+local function updateCameraFov()
+    local curCam = workspace.CurrentCamera
+    if not curCam then return end
+    if customFovEnabled then
+        if math.abs(curCam.FieldOfView - customFovValue) > 0.05 then
+            fovChanging = true
+            curCam.FieldOfView = customFovValue
+            fovChanging = false
+        end
+    end
+end
+
+local function hookCameraFov()
+    if fovPropConn then
+        pcall(function() fovPropConn:Disconnect() end)
+        fovPropConn = nil
+    end
+    pcall(function()
+        RunService:UnbindFromRenderStep("ByBankFovLock")
+    end)
+
+    local curCam = workspace.CurrentCamera
+    if not curCam then return end
+
+    -- 1. ดักจับ PropertyChangedSignal ทันทีที่มีสคริปต์ในเกมพยายามเซ็ต FOV กลับเป็น 70-95
+    fovPropConn = curCam:GetPropertyChangedSignal("FieldOfView"):Connect(function()
+        if fovChanging then return end
+        if customFovEnabled and math.abs(curCam.FieldOfView - customFovValue) > 0.05 then
+            fovChanging = true
+            curCam.FieldOfView = customFovValue
+            fovChanging = false
+        end
+    end)
+
+    -- 2. ผูกเข้า RenderPriority.Camera + 100 เพื่อรันหลัง Camera Script ของเกม ก่อนวาดเฟรมลงหน้าจอ
+    RunService:BindToRenderStep("ByBankFovLock", Enum.RenderPriority.Camera.Value + 100, function()
+        if customFovEnabled and math.abs(curCam.FieldOfView - customFovValue) > 0.05 then
+            fovChanging = true
+            curCam.FieldOfView = customFovValue
+            fovChanging = false
+        end
+    end)
+
+    if customFovEnabled then
+        updateCameraFov()
+    end
+end
+
+local function applyFOV(val)
+    if typeof(val) == "number" then
+        customFovValue = val
+        if customFovEnabled then
+            updateCameraFov()
+        end
+    end
+end
+_G.ByBankSetFov = applyFOV
+
+Tabs.Camera:AddToggle("CustomFOVToggle", {
+    Title = "เปิดปรับมุมมองกว้าง (FOV Override)",
+    Description = "บังคับมุมมองกล้องให้กว้างตามต้องการ (ป้องกันเกมล็อค 70-95 FOV)",
+    Default = true,
+    Callback = function(Value)
+        customFovEnabled = Value
+        local curCam = workspace.CurrentCamera
+        if curCam then
+            if customFovEnabled then
+                updateCameraFov()
+            else
+                curCam.FieldOfView = defaultCameraFov
+            end
+        end
+    end
+})
+
+local fovSlider = Tabs.Camera:AddSlider("CameraFOVSlider", {
+    Title = "ระยะมุมมองสายตา (FOV)",
+    Description = "ปรับมุมมองกล้องให้กว้างขึ้น (70-120 องศา)",
+    Default = 110,
+    Min = 70,
+    Max = 120,
+    Rounding = 0,
+    Callback = applyFOV
+})
+if fovSlider and typeof(fovSlider.OnChanged) == "function" then
+    fovSlider:OnChanged(applyFOV)
+end
+
+hookCameraFov()
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    task.wait(0.05)
+    hookCameraFov()
+end)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    hookCameraFov()
+end)
+
+Tabs.Camera:AddToggle("CameraZoomToggle", {
+    Title = "ปรับระยะซูมกล้องถอยหลัง (Camera Distance Zoom)",
+    Description = "ดึงมุมมองกล้องถอยหลังออกไปเพื่อให้เห็นตัวละครและรอบตัวได้กว้างสะใจยิ่งขึ้น",
+    Default = false,
+    Callback = function(Value)
+        cameraZoomEnabled = Value
+        if not cameraZoomEnabled then
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMaxZoomDistance = 128
+        end
+    end
+})
+
+local zoomSlider = Tabs.Camera:AddSlider("CameraZoomSlider", {
+    Title = "ระยะห่างกล้องจากตัวละคร (Studs)",
+    Description = "ปรับระยะห่างกล้องถอยหลัง (5 - 50 studs)",
+    Default = 18,
+    Min = 5,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(Value)
+        cameraZoomDistance = Value
+        if cameraZoomEnabled then
+            LocalPlayer.CameraMinZoomDistance = Value
+            LocalPlayer.CameraMaxZoomDistance = Value
+        end
+    end
+})
+if zoomSlider and typeof(zoomSlider.OnChanged) == "function" then
+    zoomSlider:OnChanged(function(Value)
+        cameraZoomDistance = Value
+        if cameraZoomEnabled then
+            LocalPlayer.CameraMinZoomDistance = Value
+            LocalPlayer.CameraMaxZoomDistance = Value
+        end
+    end)
+end
+Tabs.Camera:AddToggle("MenuMonitorToggle", {
+    Title = "แสดง FPS และ Ping บนหัวเมนู",
+    Description = "แสดง FPS และค่า Ping สดด้านหลังชื่อ 'by แบงค์' บนแถบเมนู",
+    Default = true,
+    Callback = function(Value)
+        showMenuMonitor = Value
+        updateMenuStats()
+    end
+})
+Tabs.Camera:AddToggle("MenuStatsToggle", {
+    Title = "แสดงสถิติ คิล/ตาย บนหัวเมนู",
+    Description = "แสดงจำนวนคิลและตายสดด้านหลังชื่อ 'by แบงค์' บนแถบเมนู",
+    Default = true,
+    Callback = function(Value)
+        showMenuStats = Value
+        updateMenuStats()
+    end
+})
+
+-- 5. TAB: HITBOX EXPANDER
+Tabs.Combat:AddParagraph({ Title = "ขยายขนาดเป้าสัมผัส", Content = "ขยายขนาดส่วนหัวศัตรูเพื่อให้ยิงโดนง่ายที่สุด" })
+Tabs.Combat:AddToggle("HitboxToggle", {
+    Title = "เปิดขยายขนาดหัวศัตรู",
+    Default = false,
+    Callback = function(Value)
+        hitboxEnabled = Value
+        if not hitboxEnabled then
+            for _, enemy in ipairs(getEnemies()) do
+                local head = enemy:FindFirstChild("Head")
+                if head then
+                    head.Size = Vector3.new(2, 1, 1)
+                    head.Transparency = 0
+                end
+            end
+        end
+    end
+})
+Tabs.Combat:AddSlider("HitboxSizeSlider", {
+    Title = "ขนาดเป้าสัมผัส",
+    Default = 12,
+    Min = 4,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(Value)
+        hitboxSize = Value
+    end
+})
+
+-- 6. TAB: MOVEMENT (ความเร็วในการวิ่งและสปีดบูสต์)
+Tabs.Movement:AddParagraph({ Title = "ระบบการเคลื่อนที่ตัวละคร", Content = "ปรับความเร็ววิ่ง สปีดบูสต์ แรงกระโดด และการเดินทะลุกำแพง" })
+Tabs.Movement:AddSlider("RunSpeedSlider", {
+    Title = "ความเร็วในการวิ่ง",
+    Description = "ปรับความเร็วพื้นฐานในการวิ่งของตัวละคร (ปกติเกมอยู่ที่ 22-26)",
+    Default = 26,
+    Min = 16,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        runSpeedValue = Value
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = runSpeedValue
+        end
+    end
+})
+Tabs.Movement:AddToggle("SprintBoostToggle", {
+    Title = "กด Shift วิ่งไวพิเศษ (Sprint Boost)",
+    Description = "เมื่อกดปุ่ม Shift ค้างไว้ จะวิ่งเร็วด้วยความเร็วสปีดบูสต์",
+    Default = true,
+    Callback = function(Value)
+        sprintBoostEnabled = Value
+    end
+})
+Tabs.Movement:AddSlider("SprintSpeedSlider", {
+    Title = "ความเร็วเมื่อกดวิ่ง (Shift Sprint)",
+    Description = "ความเร็วขณะกดปุ่ม Shift พุ่งวิ่ง",
+    Default = 45,
+    Min = 26,
+    Max = 250,
+    Rounding = 0,
+    Callback = function(Value)
+        sprintSpeedValue = Value
+    end
+})
+Tabs.Movement:AddSlider("JumpPowerSlider", {
+    Title = "แรงกระโดด",
+    Default = 50,
+    Min = 50,
+    Max = 350,
+    Rounding = 0,
+    Callback = function(Value)
+        jumpPowerValue = Value
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.UseJumpPower = true
+            hum.JumpPower = jumpPowerValue
+        end
+    end
+})
+
+-- บังคับความเร็ววิ่งและแรงกระโดดแบบต่อเนื่อง ป้องกันเกมรีเซ็ตกลับ
+if speedConn then speedConn:Disconnect() end
+speedConn = RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 then
+        local isSprinting = sprintBoostEnabled and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+        local targetSpeed = (isSprinting and sprintSpeedValue) or runSpeedValue
+        if targetSpeed > 16 and hum.WalkSpeed ~= targetSpeed then
+            hum.WalkSpeed = targetSpeed
+        end
+        if jumpPowerValue > 50 then
+            if not hum.UseJumpPower then hum.UseJumpPower = true end
+            if hum.JumpPower ~= jumpPowerValue then
+                hum.JumpPower = jumpPowerValue
+            end
+        end
+    end
+end)
+
+Tabs.Movement:AddToggle("InfJumpToggle", {
+    Title = "กระโดดกลางอากาศต่อเนื่อง",
+    Default = false,
+    Callback = function(Value)
+        infJumpEnabled = Value
+        if infJumpEnabled then
+            if not infJumpConn then
+                infJumpConn = UserInputService.JumpRequest:Connect(function()
+                    local char = LocalPlayer.Character
+                    if char and char:FindFirstChild("Humanoid") then
+                        char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end
+                end)
+            end
+        else
+            if infJumpConn then
+                infJumpConn:Disconnect()
+                infJumpConn = nil
+            end
+        end
+    end
+})
+Tabs.Movement:AddToggle("NoclipToggle", {
+    Title = "เดินทะลุกำแพง",
+    Default = false,
+    Callback = function(Value)
+        noclipEnabled = Value
+        if noclipEnabled then
+            if not noclipConn then
+                noclipConn = RunService.Stepped:Connect(function()
+                    local char = LocalPlayer.Character
+                    if char then
+                        for _, part in ipairs(char:GetDescendants()) do
+                            if part:IsA("BasePart") and part.CanCollide then
+                                part.CanCollide = false
+                            end
+                        end
+                    end
+                end)
+            end
+        else
+            if noclipConn then
+                noclipConn:Disconnect()
+                noclipConn = nil
+            end
+        end
+    end
+})
+
+-- 7. TAB: TELEPORT
+Tabs.Teleport:AddParagraph({ Title = "วาร์ปตำแหน่งตัวละคร", Content = "วาร์ปไปยังศัตรูหรือจุดต่างๆ อย่างรวดเร็ว" })
+Tabs.Teleport:AddButton({
+    Title = "วาร์ปไปด้านหลังศัตรูที่ใกล้ที่สุด",
+    Callback = function()
+        local enemy, _ = getClosestEnemy()
+        local myChar = LocalPlayer.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if enemy and myHrp then
+            local targetHrp = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
+            if targetHrp then
+                myHrp.CFrame = targetHrp.CFrame * CFrame.new(0, 0, 3)
+            end
+        end
+    end
+})
+Tabs.Teleport:AddButton({
+    Title = "วาร์ปขึ้นที่สูง (+50)",
+    Callback = function()
+        local myChar = LocalPlayer.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myHrp then
+            myHrp.CFrame = myHrp.CFrame + Vector3.new(0, 50, 0)
+        end
+    end
+})
+Tabs.Teleport:AddButton({
+    Title = "พุ่งตัวไปข้างหน้า (+25)",
+    Callback = function()
+        local myChar = LocalPlayer.Character
+        local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if myHrp then
+            myHrp.CFrame = myHrp.CFrame + (myHrp.CFrame.LookVector * 25)
+        end
+    end
+})
+
+-- 8. TAB: SETTINGS & LANGUAGE
+Tabs.Settings:AddParagraph({ Title = "การตั้งค่าระบบ", Content = "ปรับแต่งภาษา ธีมสี และการทำงานของระบบ" })
+
+-- Dynamic Language Switcher: 100% Pure Language Swap
+local function applyLanguage(lang)
+    currentLanguage = lang
+    local dict = (lang == "EN" and DICT_TH_TO_EN) or DICT_EN_TO_TH
+    
+    -- Iterate through every TextLabel in Fluent UI to translate
+    pcall(function()
+        local sg = Window.Root.Parent
+        for _, label in ipairs(sg:GetDescendants()) do
+            if label:IsA("TextLabel") and label ~= subTitleLabel and label.Text ~= "" then
+                if dict[label.Text] then
+                    label.Text = dict[label.Text]
+                end
+            end
+        end
+    end)
+
+    -- Update title bar monitor & stats immediately
+    updateMenuStats()
+
+    Fluent:Notify({
+        Title = (lang == "EN" and "by Bank") or "by แบงค์",
+        Content = (lang == "EN" and "Language switched to English completely") or "เปลี่ยนภาษาเป็น ภาษาไทย เรียบร้อยแล้ว",
+        Duration = 2.5
+    })
+end
+_G.ByBankApplyLanguage = applyLanguage
+
+Tabs.Settings:AddDropdown("LanguageDropdown", {
+    Title = "ภาษาของเมนู",
+    Values = {"ภาษาไทย (TH)", "English (EN)"},
+    Default = "ภาษาไทย (TH)",
+    Callback = function(Value)
+        if Value == "English (EN)" then
+            applyLanguage("EN")
+        else
+            applyLanguage("TH")
+        end
+    end
+})
+
+Tabs.Settings:AddDropdown("ThemeDropdown", {
+    Title = "ธีมสีของหน้าต่าง",
+    Values = {"Dark", "Darker", "Light", "Rose", "Aqua", "Amethyst"},
+    Default = "Dark",
+    Callback = function(Value)
+        Fluent:SetTheme(Value)
+    end
+})
+
+Tabs.Settings:AddToggle("AcrylicToggle", {
+    Title = "เอฟเฟกต์พื้นหลังเบลอ",
+    Default = true,
+    Callback = function(Value)
+        Fluent:ToggleTransparency(Value)
+    end
+})
+
+local function performUnload()
+    espEnabled = false
+    hitboxEnabled = false
+    aimbotEnabled = false
+    silentAimEnabled = false
+    tracersEnabled = false
+    customFovEnabled = false
+    if fovPropConn then
+        pcall(function() fovPropConn:Disconnect() end)
+        fovPropConn = nil
+    end
+    pcall(function() RunService:UnbindFromRenderStep("ByBankFovLock") end)
+    pcall(function() workspace.CurrentCamera.FieldOfView = defaultCameraFov end)
+    if noclipConn then noclipConn:Disconnect() end
+    if infJumpConn then infJumpConn:Disconnect() end
+    if speedConn then speedConn:Disconnect() end
+    pcall(function()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 16
+            hum.JumpPower = 50
+        end
+    end)
+    if renderConn then renderConn:Disconnect() end
+    if fovGui then fovGui:Destroy() end
+    if crosshairGui then crosshairGui:Destroy() end
+    if avatarGui then avatarGui:Destroy() end
+    for _, line in pairs(tracersList) do pcall(function() line:Remove() end) end
+    espFolder:ClearAllChildren()
+    espFolder:Destroy()
+    Fluent:Destroy()
+    _G.ByBankUnload = nil
+end
+_G.ByBankUnload = performUnload
+
+Tabs.Settings:AddButton({
+    Title = "ปิดการทำงานสคริปต์",
+    Callback = performUnload
+})
+
+Window:SelectTab(6)
+
+----------------------------------------------------------------------
+-- 7. FLOATING AVATAR IMAGE (SQUARE RAW IMAGE - NO BORDER, NO OUTLINE, DRAGGABLE)
+----------------------------------------------------------------------
+local avatarGui = Instance.new("ScreenGui")
+avatarGui.Name = "ByBankAvatarToggle"
+avatarGui.ResetOnSpawn = false
+avatarGui.DisplayOrder = 999999
+avatarGui.Parent = guiParent
+
+local avatarFrame = Instance.new("Frame")
+avatarFrame.Name = "AvatarFrame"
+avatarFrame.AnchorPoint = Vector2.new(0, 0)
+avatarFrame.Size = UDim2.fromOffset(34, 34)
+avatarFrame.Position = UDim2.new(0, 18, 0.62, 0)
+avatarFrame.BackgroundTransparency = 1 -- ไม่มีสีพื้นหลัง ไม่มีกรอบสี่เหลี่ยมติดขอบ
+avatarFrame.BorderSizePixel = 0
+avatarFrame.Active = true
+avatarFrame.ZIndex = 200
+avatarFrame.Visible = false -- ซ่อนตอนแรก จะปรากฏเมื่อกดปิด [X]
+avatarFrame.Parent = avatarGui
+
+-- รูปภาพสี่เหลี่ยมล้วนๆ ไม่มีกรอบติดขอบ
+local avatarImage = Instance.new("ImageLabel")
+avatarImage.Name = "AvatarImg"
+avatarImage.Size = UDim2.new(1, 0, 1, 0)
+avatarImage.Position = UDim2.new(0, 0, 0, 0)
+avatarImage.BackgroundTransparency = 1
+avatarImage.BorderSizePixel = 0
+avatarImage.ZIndex = 201
+avatarImage.Image = avatarAsset
+avatarImage.ScaleType = Enum.ScaleType.Stretch
+avatarImage.Parent = avatarFrame
+
+local avatarCorner = Instance.new("UICorner")
+avatarCorner.CornerRadius = UDim.new(0, 6)
+avatarCorner.Parent = avatarImage
+
+local clickButton = Instance.new("TextButton")
+clickButton.Name = "ClickTrigger"
+clickButton.Size = UDim2.new(1, 0, 1, 0)
+clickButton.BackgroundTransparency = 1
+clickButton.ZIndex = 202
+clickButton.Text = ""
+clickButton.Parent = avatarFrame
+
+-- ระบบลากย้ายตำแหน่งอย่างนุ่มนวล พร้อมแยกแยะระหว่างการคลิกเปิด กับการลากย้าย
+local dragging = false
+local dragStart, startPos
+local hasMoved = false
+local pressStartTime = 0
+
+clickButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        hasMoved = false
+        pressStartTime = tick()
+        dragStart = input.Position
+        startPos = avatarFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        if delta.Magnitude > 6 then
+            hasMoved = true
+            avatarFrame.Position = UDim2.fromOffset(
+                startPos.X.Offset + delta.X,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end
+end)
+
+local function restoreWindow()
+    local vp = Camera.ViewportSize
+    local currentWidth = (isRolledUp and 400) or 580
+    local currentHeight = (isRolledUp and 42) or 460
+    local closeOffsetX = (isRolledUp and 362) or 542
+
+    local targetX = avatarFrame.AbsolutePosition.X - closeOffsetX
+    local targetY = avatarFrame.AbsolutePosition.Y - 4
+
+    -- หากอยู่ชิดขอบซ้าย ให้ยึดมุมซ้ายบนของหน้าต่างตามตำแหน่งรูป
+    if targetX < 10 then
+        targetX = math.clamp(avatarFrame.AbsolutePosition.X, 10, math.max(10, vp.X - currentWidth - 10))
+    end
+    targetX = math.clamp(targetX, 10, math.max(10, vp.X - currentWidth - 10))
+    targetY = math.clamp(targetY, 10, math.max(10, vp.Y - currentHeight - 10))
+
+    Window.Root.Position = UDim2.fromOffset(targetX, targetY)
+    avatarFrame.Visible = false
+    Window.Root.Visible = true
+    Fluent:Notify({
+        Title = (currentLanguage == "EN" and "by Bank") or "by แบงค์",
+        Content = (currentLanguage == "EN" and "Window restored") or "เปิดหน้าต่างหลักแล้ว",
+        Duration = 2
+    })
+end
+_G.ByBankRestoreWindow = restoreWindow
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then
+            dragging = false
+            local pressDuration = tick() - pressStartTime
+            -- เปิดหน้าต่างเฉพาะเมื่อไม่ได้ลากย้ายตำแหน่ง และเป็นการคลิกสั้นๆ (< 0.35 วินาที)
+            if not hasMoved and pressDuration < 0.35 then
+                restoreWindow()
+            end
+        end
+    end
+end)
+
+----------------------------------------------------------------------
+-- 8. WINDOW ROLLUP (-) AND CLOSE TO RAW AVATAR IMAGE (X)
+----------------------------------------------------------------------
+local originalSize = UDim2.fromOffset(580, 460)
+local rolledUpSize = UDim2.fromOffset(400, 42)
+local lastRollupTime = 0
+
+local function toggleRollup()
+    local now = tick()
+    if now - lastRollupTime < 0.25 then return end
+    lastRollupTime = now
+
+    isRolledUp = not isRolledUp
+    Window.Root.ClipsDescendants = true
+    if isRolledUp then
+        if subTitleLabel then
+            subTitleLabel.Visible = true
+        end
+        for _, child in ipairs(Window.Root:GetChildren()) do
+            if child:IsA("GuiObject") and child ~= Window.TitleBar.Frame and (child.Position.Y.Offset > 0 or child.Position.Y.Scale > 0) then
+                child.Visible = false
+            end
+        end
+        TweenService:Create(Window.Root, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Size = rolledUpSize
+        }):Play()
+    else
+        for _, child in ipairs(Window.Root:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child.Visible = true
+            end
+        end
+        TweenService:Create(Window.Root, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Size = originalSize
+        }):Play()
+        if subTitleLabel then
+            subTitleLabel.Visible = true
+        end
+    end
+    updateMenuStats()
+end
+_G.ByBankToggleRollup = toggleRollup
+
+local function closeToAvatar()
+    local closeBtn = Window.TitleBar.CloseButton.Frame
+    local closePos = closeBtn.AbsolutePosition
+    local closeSize = closeBtn.AbsoluteSize
+
+    avatarFrame.AnchorPoint = Vector2.new(0, 0)
+    avatarFrame.Position = UDim2.fromOffset(closePos.X, closePos.Y)
+    avatarFrame.Size = UDim2.fromOffset(closeSize.X, closeSize.Y)
+
+    hasMoved = false
+    dragging = false
+    Window.Root.Visible = false
+    avatarFrame.Visible = true
+    Fluent:Notify({
+        Title = (currentLanguage == "EN" and "by Bank") or "by แบงค์",
+        Content = (currentLanguage == "EN" and "Window minimized to image") or "ย่อเป็นรูปภาพแล้ว (คลิกที่รูปเพื่อเปิดกลับ)",
+        Duration = 2.5
+    })
+end
+
+_G.ByBankCloseToAvatar = closeToAvatar
+
+local function handleMaximize()
+    if isRolledUp then
+        toggleRollup()
+    else
+        -- ป้องกันไม่ให้ Fluent ยืดเต็มจอ 100% จนเมนูหาย (ล็อกขนาดมาตรฐาน 580x460 และจัดกึ่งกลาง)
+        Window.Root.Size = originalSize
+        for _, child in ipairs(Window.Root:GetChildren()) do
+            if child:IsA("GuiObject") then
+                child.Visible = true
+            end
+        end
+        local curCam = workspace.CurrentCamera
+        local vp = (curCam and curCam.ViewportSize) or Vector2.new(1280, 720)
+        Window.Root.Position = UDim2.fromOffset(
+            math.max(10, math.floor((vp.X - 580) / 2)),
+            math.max(10, math.floor((vp.Y - 460) / 2))
+        )
+        if subTitleLabel then
+            subTitleLabel.Visible = true
+        end
+        Fluent:Notify({
+            Title = (currentLanguage == "EN" and "by Bank") or "by แบงค์",
+            Content = (currentLanguage == "EN" and "Window reset to standard size") or "จัดหน้าต่างกลับขนาดมาตรฐาน 580x460",
+            Duration = 2
+        })
+    end
+end
+
+-- Hook Fluent Native Minimize & Dialog Methods
+Window.Minimize = function(self)
+    toggleRollup()
+end
+
+Window.Maximize = function(self)
+    handleMaximize()
+end
+
+Window.Dialog = function(self, cfg)
+    closeToAvatar()
+end
+
+-- Hook Direct TitleBar Buttons interaction (Min, Max, Close)
+pcall(function()
+    if Window.TitleBar then
+        -- Min Button (-)
+        if Window.TitleBar.MinButton then
+            Window.TitleBar.MinButton.Callback = toggleRollup
+            if typeof(Window.TitleBar.MinButton.SetCallback) == "function" then
+                pcall(function() Window.TitleBar.MinButton.SetCallback(toggleRollup) end)
+            end
+            if Window.TitleBar.MinButton.Frame then
+                Window.TitleBar.MinButton.Frame.MouseButton1Click:Connect(toggleRollup)
+            end
+        end
+        -- Max Button (□)
+        if Window.TitleBar.MaxButton then
+            Window.TitleBar.MaxButton.Callback = handleMaximize
+            if typeof(Window.TitleBar.MaxButton.SetCallback) == "function" then
+                pcall(function() Window.TitleBar.MaxButton.SetCallback(handleMaximize) end)
+            end
+            if Window.TitleBar.MaxButton.Frame then
+                Window.TitleBar.MaxButton.Frame.MouseButton1Click:Connect(handleMaximize)
+            end
+        end
+        -- Close Button (X)
+        if Window.TitleBar.CloseButton then
+            Window.TitleBar.CloseButton.Callback = closeToAvatar
+            if typeof(Window.TitleBar.CloseButton.SetCallback) == "function" then
+                pcall(function() Window.TitleBar.CloseButton.SetCallback(closeToAvatar) end)
+            end
+            if Window.TitleBar.CloseButton.Frame then
+                Window.TitleBar.CloseButton.Frame.MouseButton1Click:Connect(closeToAvatar)
+            end
+        end
+    end
+end)
+
+-- Ensure ScreenGui does not reset on spawn
+pcall(function()
+    local sg = Window.Root.Parent
+    if sg and sg:IsA("ScreenGui") then
+        sg.ResetOnSpawn = false
+    end
+end)
+
+----------------------------------------------------------------------
+-- 9. DEATH & KILL TRACKING (MULTI-LAYERED & ROBUST ENGINE)
+----------------------------------------------------------------------
+local isPlayerDead = false
+local lastDeathTimestamp = 0
+local lastKillTimestamp = 0
+local lastKillSources = {}
+
+local function registerDeath(source)
+    local now = tick()
+    if isPlayerDead or (now - lastDeathTimestamp < 1.0) then return end
+    isPlayerDead = true
+    lastDeathTimestamp = now
+    sessionDeaths = sessionDeaths + 1
+    updateMenuStats()
+end
+
+local function registerRespawn()
+    isPlayerDead = false
+end
+
+local function registerKill(source, count)
+    count = count or 1
+    local now = tick()
+    -- ป้องกันการนับซ้ำระหว่าง Scoreboard กับ Kill Popup (Debounce: 0.6s)
+    if source == "KillPopup" and (now - (lastKillSources["Scoreboard"] or 0) < 0.6) then
+        return
+    end
+    if source == "Scoreboard" and (now - (lastKillSources["KillPopup"] or 0) < 0.6) then
+        lastKillSources["Scoreboard"] = now
+        return
+    end
+    if now - lastKillTimestamp < 0.25 then return end
+
+    lastKillTimestamp = now
+    lastKillSources[source] = now
+    sessionKills = sessionKills + count
+    updateMenuStats()
+end
+
+-- 9.1 Helper Functions ค้นหา UI ในเกม
+local function getScoreboardKillLabel()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    for _, guiName in ipairs({"Game Interface", "GameInterface_Mobile"}) do
+        local gi = pg:FindFirstChild(guiName)
+        if gi then
+            local topData = gi:FindFirstChild("TopData")
+            if topData and topData:FindFirstChild("Tabs") then
+                for _, item in ipairs(topData.Tabs:GetChildren()) do
+                    local pn = item:FindFirstChild("PlayerName")
+                    local k = item:FindFirstChild("Kills")
+                    if pn and pn.Text == LocalPlayer.Name and k and k:IsA("TextLabel") then
+                        return k
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getDeathscreenFrame()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    for _, guiName in ipairs({"Game Interface", "GameInterface_Mobile"}) do
+        local gi = pg:FindFirstChild(guiName)
+        if gi then
+            local ds = gi:FindFirstChild("Deathscreen", true)
+            if ds and ds:IsA("Frame") then
+                return ds
+            end
+        end
+    end
+    return nil
+end
+
+local function getKillPopupTarget()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
+    local gp = pg:FindFirstChild("Gameplay")
+    if gp then
+        local killFrame = gp:FindFirstChild("Kill")
+        if killFrame then
+            return killFrame:FindFirstChild("TargetName", true)
+        end
+    end
+    return nil
+end
+
+-- 9.2 Hook Character & Humanoid (ทั้งตอนเกิดและตาย)
+local function hookCharacter(char)
+    if not char then return end
+    local hum = char:WaitForChild("Humanoid", 4)
+    if hum then
+        if runSpeedValue > 16 then hum.WalkSpeed = runSpeedValue end
+        if jumpPowerValue > 50 then hum.UseJumpPower = true; hum.JumpPower = jumpPowerValue end
+
+        hum.Died:Connect(function()
+            registerDeath("HumanoidDied")
+        end)
+
+        hum.HealthChanged:Connect(function(hp)
+            if hp <= 0 then
+                registerDeath("HealthZero")
+            elseif hp > 0 and isPlayerDead then
+                registerRespawn()
+            end
+        end)
+
+        hum.StateChanged:Connect(function(_, newState)
+            if newState == Enum.HumanoidStateType.Dead then
+                registerDeath("StateDead")
+            end
+        end)
+    end
+
+    char.AncestryChanged:Connect(function(_, parent)
+        if not parent and not isPlayerDead then
+            local h = char:FindFirstChildOfClass("Humanoid")
+            if h and h.Health <= 0 then
+                registerDeath("CharRemovedDead")
+            end
+        end
+    end)
+
+    registerRespawn()
+end
+
+if LocalPlayer.Character then
+    task.spawn(hookCharacter, LocalPlayer.Character)
+end
+LocalPlayer.CharacterAdded:Connect(hookCharacter)
+
+-- 9.3 Hook Deathscreen (One Tap / FPS Games)
+local hookedDeathscreen = nil
+local function setupDeathscreenHook()
+    local ds = getDeathscreenFrame()
+    if ds and ds ~= hookedDeathscreen then
+        hookedDeathscreen = ds
+        ds:GetPropertyChangedSignal("Visible"):Connect(function()
+            if ds.Visible then
+                registerDeath("Deathscreen")
+            else
+                registerRespawn()
+            end
+        end)
+        if ds.Visible then
+            registerDeath("DeathscreenInitial")
+        end
+    end
+end
+setupDeathscreenHook()
+
+-- 9.4 Hook Kill Popup & Scoreboard
+local lastScoreboardKills = -1
+local lastKilledText = ""
+
+local function checkGameStats()
+    -- ตรวจสอบ Deathscreen เพิ่มเติม
+    if not hookedDeathscreen then
+        setupDeathscreenHook()
+    end
+
+    -- ตรวจสอบ Scoreboard Kills
+    local kLabel = getScoreboardKillLabel()
+    if kLabel then
+        local currentKills = tonumber(kLabel.Text)
+        if currentKills then
+            if lastScoreboardKills == -1 then
+                lastScoreboardKills = currentKills
+            elseif currentKills > lastScoreboardKills then
+                local diff = currentKills - lastScoreboardKills
+                registerKill("Scoreboard", diff)
+                lastScoreboardKills = currentKills
+            elseif currentKills < lastScoreboardKills then
+                -- Match / Round reset
+                lastScoreboardKills = currentKills
+            end
+        end
+    end
+
+    -- ตรวจสอบ Kill Popup Notification ("Killed <Player>")
+    local kTarget = getKillPopupTarget()
+    if kTarget and kTarget.Text ~= "" and kTarget.Text ~= lastKilledText then
+        if kTarget.Text:find("Killed") then
+            lastKilledText = kTarget.Text
+            registerKill("KillPopup", 1)
+        end
+    end
+end
+
+-- 9.5 Hook Universal Roblox leaderstats (สำหรับเกมทั่วไปเช่น Arsenal, Prison Life)
+local function hookLeaderstats()
+    local ls = LocalPlayer:FindFirstChild("leaderstats")
+    if ls then
+        for _, child in ipairs(ls:GetChildren()) do
+            if child:IsA("ValueBase") then
+                local name = child.Name:lower()
+                if name:find("kill") or name:find("frag") or name:find("ko") or name == "kills" then
+                    local lastVal = tonumber(child.Value) or 0
+                    child.Changed:Connect(function(newVal)
+                        local num = tonumber(newVal) or 0
+                        if num > lastVal then
+                            registerKill("Leaderstats", num - lastVal)
+                        end
+                        lastVal = num
+                    end)
+                elseif name:find("death") or name:find("wipe") or name:find("died") or name == "deaths" then
+                    local lastVal = tonumber(child.Value) or 0
+                    child.Changed:Connect(function(newVal)
+                        local num = tonumber(newVal) or 0
+                        if num > lastVal then
+                            registerDeath("Leaderstats")
+                        end
+                        lastVal = num
+                    end)
+                end
+            end
+        end
+    end
+end
+hookLeaderstats()
+LocalPlayer.ChildAdded:Connect(function(child)
+    if child.Name == "leaderstats" then
+        task.wait(0.5)
+        hookLeaderstats()
+    end
+end)
+
+----------------------------------------------------------------------
+-- 10. MAIN RENDER LOOP (FPS, PING, FOV, ESP, AIMBOT, TRACERS)
+----------------------------------------------------------------------
+local frameCount = 0
+local lastFpsUpdate = tick()
+local bottomScreenPos = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+
+renderConn = RunService.RenderStepped:Connect(function(dt)
+    -- 1. FPS & Ping Calculation (Every 0.5s)
+    frameCount = frameCount + 1
+    if tick() - lastFpsUpdate >= 0.5 then
+        currentFps = math.floor(frameCount / (tick() - lastFpsUpdate))
+        frameCount = 0
+        lastFpsUpdate = tick()
+
+        pcall(function()
+            currentPing = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+        end)
+        updateMenuStats()
+    end
+
+    -- 2. Custom Camera FOV & Zoom Distance (Safe threshold check: ป้องกัน Event Loop ซ้ำซ้อน)
+    local curCam = workspace.CurrentCamera
+    if curCam and customFovEnabled then
+        if math.abs(curCam.FieldOfView - customFovValue) > 0.05 then
+            fovChanging = true
+            curCam.FieldOfView = customFovValue
+            fovChanging = false
+        end
+    end
+    if cameraZoomEnabled then
+        LocalPlayer.CameraMinZoomDistance = cameraZoomDistance
+        LocalPlayer.CameraMaxZoomDistance = cameraZoomDistance
+    end
+
+    -- 3. Kill & Death Tracking (Polls UI scoreboard, deathscreen, and popups)
+    checkGameStats()
+
+    local enemies = getEnemies()
+    bottomScreenPos = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+
+    -- 4. Hitbox Expander
+    if hitboxEnabled then
+        for _, enemy in ipairs(enemies) do
+            local head = enemy:FindFirstChild("Head")
+            if head then
+                head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+                head.Transparency = 0.5
+                head.CanCollide = false
+            end
+        end
+    end
+
+    local activeEnemies = {}
+    for _, enemy in ipairs(enemies) do
+        activeEnemies[enemy] = true
+    end
+
+    -- 5. ESP (Box or Chams)
+    if espEnabled then
+        for _, enemy in ipairs(enemies) do
+            local hrp = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Torso") or enemy:FindFirstChild("Head")
+            if hrp then
+                if espStyle == "Box" then
+                    local hl = espFolder:FindFirstChild(enemy.Name .. "_HL")
+                    if hl then hl:Destroy() end
+
+                    local box = espFolder:FindFirstChild(enemy.Name .. "_Box")
+                    if not box then
+                        box = Instance.new("BillboardGui")
+                        box.Name = enemy.Name .. "_Box"
+                        box.Adornee = hrp
+                        box.Size = UDim2.new(4, 0, 5.5, 0)
+                        box.AlwaysOnTop = true
+                        box.ResetOnSpawn = false
+                        box.Parent = espFolder
+
+                        local frame = Instance.new("Frame")
+                        frame.Name = "BoxFrame"
+                        frame.Size = UDim2.new(1, 0, 1, 0)
+                        frame.BackgroundTransparency = 1
+                        frame.BorderSizePixel = 0
+                        frame.Parent = box
+
+                        local stroke = Instance.new("UIStroke")
+                        stroke.Name = "Stroke"
+                        stroke.Color = espColor
+                        stroke.Thickness = 1.5
+                        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+                        stroke.Parent = frame
+                    else
+                        local frame = box:FindFirstChild("BoxFrame")
+                        if frame then
+                            local stroke = frame:FindFirstChild("Stroke")
+                            if stroke then stroke.Color = espColor end
+                        end
+                    end
+                else
+                    local box = espFolder:FindFirstChild(enemy.Name .. "_Box")
+                    if box then box:Destroy() end
+
+                    local hl = espFolder:FindFirstChild(enemy.Name .. "_HL")
+                    if not hl then
+                        hl = Instance.new("Highlight")
+                        hl.Name = enemy.Name .. "_HL"
+                        hl.Adornee = enemy
+                        hl.FillColor = espColor
+                        hl.OutlineColor = espColor
+                        hl.FillTransparency = 0.5
+                        hl.OutlineTransparency = 0
+                        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        hl.Parent = espFolder
+                    else
+                        hl.FillColor = espColor
+                        hl.OutlineColor = espColor
+                    end
+                end
+
+                -- ESP Names & Health Bar (หลอดเลือดพร้อมตัวเลข HP ด้านหลัง)
+                if espNamesEnabled then
+                    local tag = espFolder:FindFirstChild(enemy.Name .. "_Tag")
+                    local hum = enemy:FindFirstChildOfClass("Humanoid")
+                    if hum then
+                        local maxHp = (hum.MaxHealth > 0 and hum.MaxHealth) or 100
+                        local curHp = math.clamp(hum.Health, 0, maxHp)
+                        local hpRatio = math.clamp(curHp / maxHp, 0, 1)
+                        local hpText = string.format("%d HP", math.floor(curHp))
+
+                        local hpColor
+                        if hpRatio > 0.5 then
+                            hpColor = Color3.fromRGB(255, 215, 0):Lerp(Color3.fromRGB(60, 235, 90), (hpRatio - 0.5) * 2)
+                        else
+                            hpColor = Color3.fromRGB(255, 55, 55):Lerp(Color3.fromRGB(255, 215, 0), hpRatio * 2)
+                        end
+
+                        if not tag then
+                            tag = Instance.new("BillboardGui")
+                            tag.Name = enemy.Name .. "_Tag"
+                            tag.Adornee = enemy:FindFirstChild("Head") or hrp
+                            tag.Size = UDim2.new(0, 140, 0, 32)
+                            tag.StudsOffset = Vector3.new(0, 2.6, 0)
+                            tag.AlwaysOnTop = true
+                            tag.ResetOnSpawn = false
+                            tag.Parent = espFolder
+
+                            -- Name Label (บรรทัดบน)
+                            local nameLabel = Instance.new("TextLabel")
+                            nameLabel.Name = "NameLabel"
+                            nameLabel.Size = UDim2.new(1, 0, 0, 15)
+                            nameLabel.Position = UDim2.new(0, 0, 0, 0)
+                            nameLabel.BackgroundTransparency = 1
+                            nameLabel.Text = enemy.Name
+                            nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            nameLabel.TextStrokeTransparency = 0
+                            nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            nameLabel.Font = Enum.Font.GothamBold
+                            nameLabel.TextSize = 12
+                            nameLabel.Parent = tag
+
+                            -- Health Bar Row (บรรทัดล่าง: หลอดเลือด + ตัวเลข HP ด้านหลัง)
+                            local hpRow = Instance.new("Frame")
+                            hpRow.Name = "HpRow"
+                            hpRow.Size = UDim2.new(1, 0, 0, 12)
+                            hpRow.Position = UDim2.new(0, 0, 0, 16)
+                            hpRow.BackgroundTransparency = 1
+                            hpRow.Parent = tag
+
+                            local hpLayout = Instance.new("UIListLayout")
+                            hpLayout.FillDirection = Enum.FillDirection.Horizontal
+                            hpLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+                            hpLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+                            hpLayout.Padding = UDim.new(0, 6)
+                            hpLayout.Parent = hpRow
+
+                            -- กรอบพื้นหลังหลอดเลือด
+                            local barBg = Instance.new("Frame")
+                            barBg.Name = "BarBg"
+                            barBg.Size = UDim2.new(0, 65, 0, 6)
+                            barBg.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+                            barBg.BorderSizePixel = 0
+                            barBg.Parent = hpRow
+
+                            local barBgCorner = Instance.new("UICorner")
+                            barBgCorner.CornerRadius = UDim.new(1, 0)
+                            barBgCorner.Parent = barBg
+
+                            local barBgStroke = Instance.new("UIStroke")
+                            barBgStroke.Color = Color3.fromRGB(10, 10, 15)
+                            barBgStroke.Thickness = 1
+                            barBgStroke.Parent = barBg
+
+                            -- แถบสีเลือด (ขยาย-หดตามเลือดจริง)
+                            local barFill = Instance.new("Frame")
+                            barFill.Name = "BarFill"
+                            barFill.Size = UDim2.new(hpRatio, 0, 1, 0)
+                            barFill.BackgroundColor3 = hpColor
+                            barFill.BorderSizePixel = 0
+                            barFill.Parent = barBg
+
+                            local barFillCorner = Instance.new("UICorner")
+                            barFillCorner.CornerRadius = UDim.new(1, 0)
+                            barFillCorner.Parent = barFill
+
+                            -- ตัวเลข HP ด้านหลังหลอดเลือด
+                            local hpLabel = Instance.new("TextLabel")
+                            hpLabel.Name = "HpLabel"
+                            hpLabel.Size = UDim2.new(0, 48, 1, 0)
+                            hpLabel.BackgroundTransparency = 1
+                            hpLabel.Text = hpText
+                            hpLabel.TextColor3 = hpColor
+                            hpLabel.TextStrokeTransparency = 0
+                            hpLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                            hpLabel.Font = Enum.Font.GothamBold
+                            hpLabel.TextSize = 10
+                            hpLabel.TextXAlignment = Enum.TextXAlignment.Left
+                            hpLabel.Parent = hpRow
+                        else
+                            local hpRow = tag:FindFirstChild("HpRow")
+                            if hpRow then
+                                local barBg = hpRow:FindFirstChild("BarBg")
+                                if barBg then
+                                    local barFill = barBg:FindFirstChild("BarFill")
+                                    if barFill then
+                                        barFill.Size = UDim2.new(hpRatio, 0, 1, 0)
+                                        barFill.BackgroundColor3 = hpColor
+                                    end
+                                end
+                                local hpLabel = hpRow:FindFirstChild("HpLabel")
+                                if hpLabel then
+                                    hpLabel.Text = hpText
+                                    hpLabel.TextColor3 = hpColor
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Clean stale ESP instances
+        for _, c in ipairs(espFolder:GetChildren()) do
+            local enemyName = c.Name:gsub("_Box", ""):gsub("_HL", ""):gsub("_Tag", "")
+            local targetModel = Workspace:FindFirstChild(enemyName)
+            if not targetModel or not activeEnemies[targetModel] then
+                c:Destroy()
+            end
+        end
+    end
+
+    -- 6. Tracers (Snaplines)
+    if tracersEnabled then
+        for _, enemy in ipairs(enemies) do
+            local hrp = enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChild("Head")
+            if hrp then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                local line = tracersList[enemy]
+                if onScreen then
+                    if not line then
+                        pcall(function()
+                            if typeof(Drawing) == "table" and Drawing.new then
+                                line = Drawing.new("Line")
+                                line.Thickness = 1.5
+                                line.Color = tracerColor
+                                line.Transparency = 0.8
+                                tracersList[enemy] = line
+                            end
+                        end)
+                    end
+                    if line then
+                        pcall(function()
+                            line.From = bottomScreenPos
+                            line.To = Vector2.new(screenPos.X, screenPos.Y)
+                            line.Color = tracerColor
+                            line.Visible = true
+                        end)
+                    end
+                else
+                    if line then
+                        pcall(function() line.Visible = false end)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 7. Clean stale Tracers
+    for enemy, line in pairs(tracersList) do
+        if not activeEnemies[enemy] or not tracersEnabled then
+            pcall(function()
+                if line then
+                    line.Visible = false
+                    line:Remove()
+                    tracersList[enemy] = nil
+                end
+            end)
+        end
+    end
+
+    -- 8. Camera Aimbot
+    if aimbotEnabled and isAimKeyPressed() then
+        local targetHead = getTargetInFOV()
+        if targetHead then
+            local targetCFrame = CFrame.new(Camera.CFrame.Position, targetHead.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, math.clamp(aimSmoothness, 0.05, 1))
+        end
+    end
+end)
+
+-- 9. Silent Aim Hook
+pcall(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        if silentAimEnabled and (method == "FireServer" or method == "InvokeServer") then
+            local targetHead = getTargetInFOV()
+            if targetHead then
+                for i, v in ipairs(args) do
+                    if typeof(v) == "Vector3" then
+                        args[i] = targetHead.Position
+                    elseif typeof(v) == "CFrame" then
+                        args[i] = CFrame.new(v.Position, targetHead.Position)
+                    end
+                end
+                return oldNamecall(self, table.unpack(args))
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+end)
+
+print("[by แบงค์] Script v2.4 successfully loaded: Header Monitor & Stats, Safe FOV, Running Speed & Sprint Boost.")
